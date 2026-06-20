@@ -461,6 +461,7 @@ textarea.cap-input{width:100%;border:1.5px solid var(--db-border);border-radius:
       <img id="postPreviewImg" class="preview-img hidden">
       <input type="file" id="postImageInput" accept="image/*" class="hidden">
       <textarea id="postCaptionInput" class="cap-input" data-i18n-placeholder="captionPlaceholder" style="margin-top:12px;"></textarea>
+      <div id="createPostErrorBox" class="auth-error-box hidden" style="margin-top:12px;margin-bottom:0;"></div>
       <button class="btn-primary" id="submitPostBtn" data-action="submitNewPost" style="margin-top:12px;" disabled data-i18n="shareBtn"></button>
     </div>
   </div>
@@ -602,11 +603,12 @@ function relTime(ts){
   if(d < 7) return d+' g';
   return new Date(ts).toLocaleDateString();
 }
-function toast(msg){
+function toast(msg, isError){
   const c = document.getElementById('toastContainer');
   const elt = document.createElement('div'); elt.className='toast'; elt.textContent = msg;
   c.appendChild(elt); requestAnimationFrame(()=>elt.classList.add('show'));
-  setTimeout(()=>{ elt.classList.remove('show'); setTimeout(()=>elt.remove(),300); }, 2600);
+  const duration = isError ? 6000 : 2600;
+  setTimeout(()=>{ elt.classList.remove('show'); setTimeout(()=>elt.remove(),300); }, duration);
 }
 function resizeImageFile(file, maxDim, quality, cb){
   const reader = new FileReader();
@@ -979,13 +981,19 @@ function renderFeed(){
   container.innerHTML = feedPosts.map(p => renderPostCard(p)).join('');
 }
 function findPost(id){ return allPosts.find(p=>p.id===id); }
-function reportFsError(action, err){
+function reportFsError(action, err, boxId){
   console.error(action, err);
+  let msg;
   if(err && err.code === 'permission-denied'){
-    toast('Permesso negato da Firestore. Controlla di aver pubblicato le regole di sicurezza (Firestore → Rules → Pubblica).');
+    msg = 'Permesso negato da Firestore. Vai su Firestore → Rules, controlla di aver incollato le regole giuste e clicca "Pubblica", poi riprova.';
   } else {
-    toast('Errore: ' + (err && (err.code || err.message) || 'sconosciuto'));
+    msg = 'Errore Firebase (' + action + '): ' + (err && (err.code || err.message) || 'sconosciuto');
   }
+  if(boxId){
+    const box = document.getElementById(boxId);
+    if(box){ box.textContent = msg; box.classList.remove('hidden'); }
+  }
+  toast(msg, true);
 }
 
 async function toggleLike(postId){
@@ -1342,11 +1350,13 @@ function openCreatePost(){
   document.getElementById('postPreviewImg').classList.add('hidden');
   document.getElementById('postUploadZone').classList.remove('hidden');
   document.getElementById('postCaptionInput').value='';
+  document.getElementById('createPostErrorBox').classList.add('hidden');
   const btn = document.getElementById('submitPostBtn'); btn.disabled = true;
   document.getElementById('modalCreatePost').classList.remove('hidden');
 }
 function triggerPostImage(){ document.getElementById('postImageInput').click(); }
 async function submitNewPost(){
+  document.getElementById('createPostErrorBox').classList.add('hidden');
   if(!pendingPostImage || !me) { toast(t('uploadFirst')); return; }
   const caption = document.getElementById('postCaptionInput').value.trim();
   const btn = document.getElementById('submitPostBtn'); btn.disabled = true;
@@ -1357,7 +1367,7 @@ async function submitNewPost(){
     });
     closeModal(null,'modalCreatePost');
     toast(t('postPublished'));
-  }catch(err){ console.error(err); toast(t('errGeneric')); }
+  }catch(err){ reportFsError('submitNewPost', err, 'createPostErrorBox'); btn.disabled = false; return; }
   btn.disabled = false;
 }
 
@@ -1479,7 +1489,8 @@ function attachGlobalListeners(){
     const file = e.target.files[0]; if(!file || !me) return;
     resizeImageFile(file, 360, 0.8, async dataUrl=>{
       document.getElementById('editAvatarPreview').src = dataUrl;
-      await dbFs.collection('users').doc(me.uid).update({avatar: dataUrl});
+      try{ await dbFs.collection('users').doc(me.uid).update({avatar: dataUrl}); }
+      catch(err){ reportFsError('editAvatar', err); }
     });
   });
 
